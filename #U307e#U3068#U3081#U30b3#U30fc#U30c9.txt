@@ -1,0 +1,5598 @@
+========================================
+DriveX プロジェクトコード バックアップ
+========================================
+
+取得日時：2026-08-21 11:24:24
+
+スクリプトID：1j_8t-O6PsPs5yewXTb5qvdn28Oy9mp6KNVzz24m4a6cOY5Gs7Cl5PTVs
+
+ファイル数：20
+
+========================================
+
+
+
+========================================
+========== appsscript.json ==========
+========================================
+
+{
+  "timeZone": "Asia/Tokyo",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Drive",
+        "version": "v3",
+        "serviceId": "drive"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  },
+  "executionApi": {
+    "access": "MYSELF"
+  },
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.projects",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/spreadsheets"
+  ]
+}
+
+
+
+========================================
+========== Auth.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Auth.gs
+ * 認証・セッション管理
+ * Version : 1.0.1
+ * ==========================================================
+ */
+
+/**
+ * ログイン
+ */
+function login(
+  userId,
+  password
+) {
+
+  userId =
+    toText(userId);
+
+  password =
+    toText(password);
+
+  if (
+    isEmpty(userId) ||
+    isEmpty(password)
+  ) {
+
+    return failure(
+      "IDまたはパスワードが入力されていません。"
+    );
+
+  }
+
+  const user =
+    getUser(
+      userId
+    );
+
+  if (
+    !user
+  ) {
+
+    return failure(
+      DRIVEX.MESSAGE.LOGIN_FAILED
+    );
+
+  }
+
+  if (
+    user.password !== password
+  ) {
+
+    return failure(
+      DRIVEX.MESSAGE.LOGIN_FAILED
+    );
+
+  }
+
+  if (
+    user.status !==
+    DRIVEX.USER.STATUS.ACTIVE
+  ) {
+
+    return failure(
+      "このユーザーは無効です。"
+    );
+
+  }
+
+  const session =
+    createSession(
+      user
+    );
+
+  // ★ ログイン成功時にユーザー用フォルダを自動作成（DriveX/Users 配下）
+  try {
+    ensureUserFolder(user.userId);
+  } catch (e) {
+    Logger.log("フォルダ自動作成エラー: " + e.message);
+  }
+
+  return success(
+    DRIVEX.MESSAGE.LOGIN_SUCCESS,
+    session
+  );
+
+}
+
+/**
+ * セッション作成
+ */
+function createSession(
+  user
+) {
+
+  const session = {
+
+    sessionId:
+
+      generateId(
+        "SESSION"
+      ),
+
+    userId:
+
+      user.userId,
+
+    role:
+
+      user.role,
+
+    loginTime:
+
+      getNow()
+
+  };
+
+  PropertiesService
+    .getUserProperties()
+    .setProperty(
+      DRIVEX.SESSION.KEY,
+      toJson(session)
+    );
+
+  return session;
+
+}
+
+/**
+ * 現在ログインユーザー取得
+ */
+function getCurrentUser() {
+
+  const data =
+    PropertiesService
+      .getUserProperties()
+      .getProperty(
+        DRIVEX.SESSION.KEY
+      );
+
+  if (
+    !data
+  ) {
+
+    return null;
+
+  }
+
+  return fromJson(
+    data
+  );
+
+}
+/**
+ * ログアウト
+ */
+function logout() {
+
+  PropertiesService
+    .getUserProperties()
+    .deleteProperty(
+      DRIVEX.SESSION.KEY
+    );
+
+  return success(
+    "ログアウトしました。"
+  );
+
+}
+
+/**
+ * ログイン状態確認
+ */
+function isLoggedIn() {
+
+  const user =
+    getCurrentUser();
+
+  return user !== null;
+
+}
+
+/**
+ * 権限取得
+ */
+function getCurrentRole() {
+
+  const user =
+    getCurrentUser();
+
+  if (
+    !user
+  ) {
+
+    return null;
+
+  }
+
+  return user.role;
+
+}
+
+/**
+ * 管理者確認
+ */
+function requireAdmin() {
+
+  const role =
+    getCurrentRole();
+
+  if (
+    role !==
+    DRIVEX.USER.ROLES.ADMIN
+  ) {
+
+    return false;
+
+  }
+
+  return true;
+
+}
+
+/**
+ * ログインユーザー情報取得
+ */
+function getLoginUserInfo() {
+
+  const session =
+    getCurrentUser();
+
+  if (
+    !session
+  ) {
+
+    return failure(
+      "ログインしていません。"
+    );
+
+  }
+
+  const user =
+    getUser(
+      session.userId
+    );
+
+  if (
+    !user
+  ) {
+
+    return failure(
+      "ユーザー情報がありません。"
+    );
+
+  }
+
+  return success(
+    "取得しました。",
+    {
+
+      userId:
+        user.userId,
+
+      role:
+        user.role,
+
+      status:
+        user.status
+
+    }
+  );
+
+}
+
+/**
+ * DriveX/Users 配下にユーザー用フォルダが存在するか確認し、無ければ作成する
+ */
+function ensureUserFolder(userId) {
+
+  if (!userId) return;
+
+  try {
+
+    var drivexFolders =
+      DriveApp.getFoldersByName("DriveX");
+
+    if (!drivexFolders.hasNext()) return;
+
+    var drivexFolder =
+      drivexFolders.next();
+
+    var usersFolders =
+      drivexFolder.getFoldersByName("Users");
+
+    if (!usersFolders.hasNext()) return;
+
+    var usersFolder =
+      usersFolders.next();
+
+    var targetUserFolders =
+      usersFolder.getFoldersByName(userId);
+
+    if (!targetUserFolders.hasNext()) {
+
+      usersFolder.createFolder(userId);
+
+      Logger.log(
+        "Users内にユーザーフォルダを作成しました: " + userId
+      );
+
+    }
+
+  } catch (error) {
+
+    Logger.log(
+      "ensureUserFolder エラー: " + error.message
+    );
+
+  }
+
+}
+
+
+
+========================================
+========== Code.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Code.gs
+ * Webアプリ入口
+ * Version : 1.0.1
+ * ==========================================================
+ */
+
+
+/**
+ * Webアプリ起動
+ */
+function doGet(e) {
+
+
+  let page = "Login";
+
+
+  if(
+    e &&
+    e.parameter &&
+    e.parameter.page
+  ){
+
+    page =
+      e.parameter.page;
+
+  }
+
+
+
+  return loadPage(
+    page
+  );
+
+
+}
+
+
+
+/**
+ * HTMLページ読み込み
+ */
+function loadPage(
+  page
+) {
+
+
+  const allowPages = [
+
+
+    "Login",
+
+    "Dashboard",
+
+    "UserManager",
+
+    "Upload",
+
+    "Preview",
+
+    "Settings"
+
+
+  ];
+
+
+
+  if(
+    allowPages.indexOf(page)
+    === -1
+  ){
+
+    page =
+      "Login";
+
+  }
+
+
+
+  return HtmlService
+
+    .createTemplateFromFile(
+      page
+    )
+
+    .evaluate()
+
+    .setTitle(
+      DRIVEX.APP.NAME
+    )
+
+    .setXFrameOptionsMode(
+      HtmlService
+      .XFrameOptionsMode
+      .ALLOWALL
+    );
+
+
+}
+
+
+
+/**
+ * HTML共通読み込み
+ */
+function include(
+  filename
+){
+
+  return HtmlService
+
+    .createHtmlOutputFromFile(
+      filename
+    )
+
+    .getContent();
+
+}
+
+
+
+/**
+ * ログイン情報取得
+ */
+function getLoginData(){
+
+  return getLoginUserInfo();
+
+}
+
+
+
+/**
+ * ログアウト
+ */
+function logoutUser(){
+
+
+  const user =
+    getCurrentUser();
+
+
+
+  if(user){
+
+
+    logLogout(
+      user.userId
+    );
+
+
+  }
+
+
+
+  return logout();
+
+
+}
+
+
+
+/**
+ * WebアプリURL取得
+ */
+function getWebAppUrl(){
+
+
+  return ScriptApp
+
+    .getService()
+
+    .getUrl();
+
+
+}
+
+
+
+========================================
+========== Config.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Config.gs
+ * システム設定
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+const DRIVEX = Object.freeze({
+
+
+  /**
+   * アプリ基本情報
+   */
+  APP: {
+
+    NAME: "DriveX",
+
+    VERSION: "1.0.0",
+
+    TIMEZONE: "Asia/Tokyo"
+
+  },
+
+
+  /**
+   * スプレッドシート
+   */
+  SHEETS: {
+
+    USERS: "Users",
+
+    FILES: "Files",
+
+    FAVORITES: "Favorites",
+
+    TRASH: "Trash",
+
+    LOGS: "Logs",
+
+    SETTINGS: "Settings"
+
+  },
+
+
+  /**
+   * Driveフォルダー
+   */
+  FOLDERS: {
+
+    ROOT: "DriveX",
+
+    USERS: "Users",
+
+    FILES: "Files",
+
+    TRASH: "Trash",
+
+    TEMP: "Temp",
+
+    SYSTEM: "System"
+
+  },
+
+
+  /**
+   * ユーザー設定
+   */
+  USER: {
+
+    ROLES: {
+
+      ADMIN: "admin",
+
+      USER: "user"
+
+    },
+
+
+    STATUS: {
+
+      ACTIVE: "active",
+
+      INACTIVE: "inactive"
+
+    }
+
+  },
+
+
+  /**
+   * 初期管理者
+   */
+  ADMIN: {
+
+    ID: "Driexadmin002",
+
+    PASSWORD: "Driexpas002",
+
+    ROLE: "admin"
+
+  },
+
+
+  /**
+   * 初期ユーザー
+   */
+  DEFAULT_USER: {
+
+    ID: "kari01",
+
+    PASSWORD: "kari01",
+
+    ROLE: "user"
+
+  },
+
+
+  /**
+   * ファイル設定
+   */
+  FILE: {
+
+    MAX_SIZE:
+      100 * 1024 * 1024,
+
+
+    ALLOW_EXTENSIONS: [
+
+      "pdf",
+
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "webp",
+
+      "mp4",
+      "mov",
+
+      "zip",
+
+      "xls",
+      "xlsx",
+
+      "doc",
+      "docx",
+
+      "txt",
+
+      "html",
+      "css",
+      "js",
+      "gs"
+
+    ]
+
+  },
+
+
+  /**
+   * ログ設定
+   */
+  LOG: {
+
+    ENABLE: true,
+
+    LOGIN: true,
+
+    ACTION: true
+
+  },
+
+
+  /**
+   * 表示設定
+   */
+  VIEW: {
+
+    DEFAULT_PAGE: "home",
+
+    ITEMS_PER_PAGE: 50,
+
+    MODE: "grid"
+
+  },
+
+
+  /**
+   * セッション設定
+   */
+  SESSION: {
+
+    TIMEOUT:
+
+      60 * 60,
+
+
+    KEY:
+
+      "DRIVEX_SESSION"
+
+  },
+
+
+  /**
+   * メッセージ
+   */
+  MESSAGE: {
+
+    LOGIN_SUCCESS:
+
+      "ログインしました。",
+
+
+    LOGIN_FAILED:
+
+      "ログイン情報が正しくありません。",
+
+
+    PERMISSION_DENIED:
+
+      "権限がありません。",
+
+
+    USER_NOT_FOUND:
+
+      "ユーザーが見つかりません。"
+
+  },
+
+
+  /**
+   * システム設定
+   */
+  SYSTEM: {
+
+    DEBUG: true,
+
+    MAINTENANCE: false
+
+  }
+
+
+});
+
+
+
+========================================
+========== FileManager.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - FileManager.gs
+ * ファイル管理
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * Filesシート取得
+ */
+function getFileSheet() {
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+
+  const sheet =
+    ss.getSheetByName(
+      DRIVEX.SHEETS.FILES
+    );
+
+
+
+  if (
+    !sheet
+  ) {
+
+
+    throw new Error(
+      "Filesシートがありません。"
+    );
+
+
+  }
+
+
+
+  return sheet;
+
+
+}
+
+
+
+/**
+ * ユーザーのファイル一覧取得
+ */
+function getFileList(
+  userId
+) {
+
+
+  const sheet =
+    getFileSheet();
+
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  if (
+    values.length <= 1
+  ) {
+
+
+    return [];
+
+  }
+
+
+
+  return values
+    .slice(1)
+    .filter(function(row){
+
+
+      return (
+        row[1] === userId
+      );
+
+
+    })
+    .map(function(row){
+
+
+      return {
+
+
+        fileId:
+          row[0],
+
+
+        userId:
+          row[1],
+
+
+        name:
+          row[2],
+
+
+        type:
+          row[3],
+
+
+        size:
+          row[4],
+
+
+        created:
+          row[5]
+
+
+      };
+
+
+    });
+
+
+}
+
+
+
+/**
+ * ファイル情報保存
+ */
+function saveFileInfo(
+  data
+) {
+
+
+  const sheet =
+    getFileSheet();
+
+
+
+  sheet.appendRow([
+
+
+    data.fileId,
+
+
+    data.userId,
+
+
+    data.name,
+
+
+    data.type,
+
+
+    data.size,
+
+
+    getNow()
+
+
+  ]);
+
+
+
+  return true;
+
+
+}
+
+
+
+/**
+ * Driveファイル取得
+ */
+function getDriveFile(
+  fileId
+) {
+
+
+  return DriveApp
+    .getFileById(
+      fileId
+    );
+
+
+}
+/**
+ * ファイル移動（ゴミ箱）
+ */
+function moveToTrash(
+  fileId,
+  userId
+) {
+
+
+  const file =
+    getDriveFile(
+      fileId
+    );
+
+
+
+  const trashFolder =
+    getTrashFolder();
+
+
+
+  file.moveTo(
+    trashFolder
+  );
+
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        DRIVEX.SHEETS.TRASH
+      );
+
+
+
+  sheet.appendRow([
+
+
+    fileId,
+
+
+    userId,
+
+
+    getNow()
+
+
+  ]);
+
+
+
+  return success(
+    "ゴミ箱へ移動しました。"
+  );
+
+
+}
+
+
+
+/**
+ * ゴミ箱から復元
+ */
+function restoreFile(
+  fileId
+) {
+
+
+  const file =
+    getDriveFile(
+      fileId
+    );
+
+
+
+  const filesFolder =
+    getFilesFolder();
+
+
+
+  file.moveTo(
+    filesFolder
+  );
+
+
+
+  return success(
+    "復元しました。"
+  );
+
+
+}
+
+
+
+/**
+ * 完全削除
+ */
+function deleteFile(
+  fileId
+) {
+
+
+  const file =
+    getDriveFile(
+      fileId
+    );
+
+
+
+  file.setTrashed(
+    true
+  );
+
+
+
+  return success(
+    "削除しました。"
+  );
+
+
+}
+
+
+
+/**
+ * ファイル情報検索
+ */
+function getFileInfo(
+  fileId
+) {
+
+
+  const sheet =
+    getFileSheet();
+
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === fileId
+    ) {
+
+
+      return {
+
+
+        fileId:
+          values[i][0],
+
+
+        userId:
+          values[i][1],
+
+
+        name:
+          values[i][2],
+
+
+        type:
+          values[i][3],
+
+
+        size:
+          values[i][4],
+
+
+        created:
+          values[i][5]
+
+
+      };
+
+
+    }
+
+
+  }
+
+
+
+  return null;
+
+
+}
+/**
+ * お気に入り追加
+ */
+function addFavorite(
+  userId,
+  fileId
+) {
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        DRIVEX.SHEETS.FAVORITES
+      );
+
+
+
+  sheet.appendRow([
+
+
+    userId,
+
+
+    fileId,
+
+
+    getNow()
+
+
+  ]);
+
+
+
+  return success(
+    "お気に入りに追加しました。"
+  );
+
+
+}
+
+
+
+/**
+ * お気に入り削除
+ */
+function removeFavorite(
+  userId,
+  fileId
+) {
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        DRIVEX.SHEETS.FAVORITES
+      );
+
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === userId &&
+      values[i][1] === fileId
+    ) {
+
+
+      sheet.deleteRow(
+        i + 1
+      );
+
+
+      return success(
+        "お気に入りを解除しました。"
+      );
+
+
+    }
+
+
+  }
+
+
+
+  return failure(
+    "お気に入りが見つかりません。"
+  );
+
+
+}
+
+
+
+/**
+ * ファイル検索
+ */
+function searchFiles(
+  userId,
+  keyword
+) {
+
+
+  const files =
+    getFileList(
+      userId
+    );
+
+
+
+  keyword =
+    toText(
+      keyword
+    )
+    .toLowerCase();
+
+
+
+  return files.filter(function(file){
+
+
+    return (
+      file.name
+        .toLowerCase()
+        .indexOf(
+          keyword
+        ) !== -1
+    );
+
+
+  });
+
+
+}
+
+
+
+/**
+ * ファイル数取得
+ */
+function getFileCount(
+  userId
+) {
+
+
+  return getFileList(
+    userId
+  ).length;
+
+
+}
+
+
+
+
+========================================
+========== Setup.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Setup.gs
+ * 初期セットアップ
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * DriveX初期セットアップ
+ */
+function setupDriveX() {
+
+  setupStorageFolders();
+
+  setupSheets();
+
+  setupDefaultUsers();
+
+
+  return {
+    success: true,
+    message: "DriveX初期設定が完了しました。"
+  };
+
+}
+
+
+/**
+ * スプレッドシートシート作成
+ */
+function setupSheets() {
+
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheets = [
+
+    DRIVEX.SHEETS.USERS,
+
+    DRIVEX.SHEETS.FILES,
+
+    DRIVEX.SHEETS.FAVORITES,
+
+    DRIVEX.SHEETS.TRASH,
+
+    DRIVEX.SHEETS.LOGS,
+
+    DRIVEX.SHEETS.SETTINGS
+
+  ];
+
+
+  sheets.forEach(function(name){
+
+
+    let sheet =
+      ss.getSheetByName(name);
+
+
+    if (!sheet) {
+
+
+      sheet =
+        ss.insertSheet(name);
+
+
+      setupSheetHeader(
+        sheet,
+        name
+      );
+
+
+    }
+
+
+  });
+
+
+}
+
+
+/**
+ * シートヘッダー設定
+ */
+function setupSheetHeader(sheet, name) {
+
+
+  const headers = {
+
+
+    Users: [
+
+      "UserID",
+
+      "Password",
+
+      "Role",
+
+      "Status"
+
+    ],
+
+
+    Files: [
+
+      "FileID",
+
+      "UserID",
+
+      "Name",
+
+      "Type",
+
+      "Size",
+
+      "Created"
+
+    ],
+
+
+    Favorites: [
+
+      "UserID",
+
+      "FileID",
+
+      "Created"
+
+    ],
+
+
+    Trash: [
+
+      "FileID",
+
+      "UserID",
+
+      "Deleted"
+
+    ],
+
+
+    Logs: [
+
+      "Time",
+
+      "UserID",
+
+      "Action",
+
+      "Detail"
+
+    ],
+
+
+    Settings: [
+
+      "Key",
+
+      "Value"
+
+    ]
+
+
+  };
+
+
+  if (headers[name]) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers[name].length
+      )
+      .setValues([
+        headers[name]
+      ]);
+
+  }
+
+
+}
+/**
+ * 初期ユーザー作成
+ */
+function setupDefaultUsers() {
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        DRIVEX.SHEETS.USERS
+      );
+
+
+  const users =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  const existingIds =
+    users.map(function(row){
+
+      return row[0];
+
+    });
+
+
+  /**
+   * 管理者追加
+   */
+  if (
+    existingIds.indexOf(
+      DRIVEX.ADMIN.ID
+    ) === -1
+  ) {
+
+
+    sheet.appendRow([
+
+      DRIVEX.ADMIN.ID,
+
+      DRIVEX.ADMIN.PASSWORD,
+
+      DRIVEX.ADMIN.ROLE,
+
+      DRIVEX.USER.STATUS.ACTIVE
+
+    ]);
+
+
+    createUserFolder(
+      DRIVEX.ADMIN.ID
+    );
+
+
+  }
+
+
+  /**
+   * 初期一般ユーザー追加
+   */
+  if (
+    existingIds.indexOf(
+      DRIVEX.DEFAULT_USER.ID
+    ) === -1
+  ) {
+
+
+    sheet.appendRow([
+
+      DRIVEX.DEFAULT_USER.ID,
+
+      DRIVEX.DEFAULT_USER.PASSWORD,
+
+      DRIVEX.DEFAULT_USER.ROLE,
+
+      DRIVEX.USER.STATUS.ACTIVE
+
+    ]);
+
+
+    createUserFolder(
+      DRIVEX.DEFAULT_USER.ID
+    );
+
+
+  }
+
+
+}
+
+
+/**
+ * セットアップ確認
+ */
+function checkDriveXSetup() {
+
+
+  const result = {
+
+
+    root:
+
+      false,
+
+
+    sheets:
+
+      false,
+
+
+    users:
+
+      false
+
+
+  };
+
+
+  try {
+
+
+    getRootFolder();
+
+
+    result.root = true;
+
+
+  } catch(e) {
+
+
+    result.root = false;
+
+
+  }
+
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  result.sheets =
+
+    ss.getSheetByName(
+      DRIVEX.SHEETS.USERS
+    ) !== null;
+
+
+
+  const users =
+    getUsersForSetup();
+
+
+  result.users =
+    users.length > 0;
+
+
+
+  return result;
+
+
+}
+
+
+/**
+ * セットアップ用ユーザー取得
+ */
+function getUsersForSetup() {
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        DRIVEX.SHEETS.USERS
+      );
+
+
+  if (!sheet) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  if (values.length <= 1) {
+
+    return [];
+
+  }
+
+
+  return values.slice(1);
+
+
+}
+
+
+
+========================================
+========== Storage.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Storage.gs
+ * Google Drive管理
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * DriveXルートフォルダー取得
+ */
+function getRootFolder() {
+
+  const folders = DriveApp.getFoldersByName(
+    DRIVEX.FOLDERS.ROOT
+  );
+
+
+  if (!folders.hasNext()) {
+
+    throw new Error(
+      "DriveXフォルダーが見つかりません。"
+    );
+
+  }
+
+
+  return folders.next();
+
+}
+
+
+/**
+ * 指定フォルダー取得
+ */
+function getStorageFolder(folderName) {
+
+  const root =
+    getRootFolder();
+
+
+  const folders =
+    root.getFoldersByName(
+      folderName
+    );
+
+
+  if (!folders.hasNext()) {
+
+    throw new Error(
+      folderName +
+      " フォルダーが見つかりません。"
+    );
+
+  }
+
+
+  return folders.next();
+
+}
+
+
+/**
+ * Usersフォルダー取得
+ */
+function getUsersFolder() {
+
+  return getStorageFolder(
+    DRIVEX.FOLDERS.USERS
+  );
+
+}
+
+
+/**
+ * Filesフォルダー取得
+ */
+function getFilesFolder() {
+
+  return getStorageFolder(
+    DRIVEX.FOLDERS.FILES
+  );
+
+}
+
+
+/**
+ * Trashフォルダー取得
+ */
+function getTrashFolder() {
+
+  return getStorageFolder(
+    DRIVEX.FOLDERS.TRASH
+  );
+
+}
+
+
+/**
+ * Tempフォルダー取得
+ */
+function getTempFolder() {
+
+  return getStorageFolder(
+    DRIVEX.FOLDERS.TEMP
+  );
+
+}
+
+
+/**
+ * Systemフォルダー取得
+ */
+function getSystemFolder() {
+
+  return getStorageFolder(
+    DRIVEX.FOLDERS.SYSTEM
+  );
+
+}
+/**
+ * フォルダー存在確認
+ */
+function storageFolderExists(folderName) {
+
+  const root =
+    getRootFolder();
+
+
+  const folders =
+    root.getFoldersByName(
+      folderName
+    );
+
+
+  return folders.hasNext();
+
+}
+
+
+/**
+ * DriveX基本フォルダー作成
+ */
+function setupStorageFolders() {
+
+  const rootFolders =
+    DriveApp.getFoldersByName(
+      DRIVEX.FOLDERS.ROOT
+    );
+
+
+  let root;
+
+
+  if (rootFolders.hasNext()) {
+
+    root = rootFolders.next();
+
+  } else {
+
+    root =
+      DriveApp.createFolder(
+        DRIVEX.FOLDERS.ROOT
+      );
+
+  }
+
+
+  const folders = [
+
+    DRIVEX.FOLDERS.USERS,
+
+    DRIVEX.FOLDERS.FILES,
+
+    DRIVEX.FOLDERS.TRASH,
+
+    DRIVEX.FOLDERS.TEMP,
+
+    DRIVEX.FOLDERS.SYSTEM
+
+  ];
+
+
+  folders.forEach(function(name){
+
+    const exists =
+      root.getFoldersByName(name);
+
+
+    if (!exists.hasNext()) {
+
+      root.createFolder(name);
+
+    }
+
+  });
+
+
+  return {
+    success: true,
+    message: "DriveXフォルダー構成を確認しました。"
+  };
+
+}
+
+
+/**
+ * ユーザーフォルダー作成
+ */
+function createUserFolder(userId) {
+
+
+  const usersFolder =
+    getUsersFolder();
+
+
+  const folders =
+    usersFolder.getFoldersByName(
+      userId
+    );
+
+
+  if (folders.hasNext()) {
+
+    return folders.next();
+
+  }
+
+
+  return usersFolder.createFolder(
+    userId
+  );
+
+}
+
+
+/**
+ * ユーザーフォルダー取得
+ */
+function getUserFolder(userId) {
+
+
+  const usersFolder =
+    getUsersFolder();
+
+
+  const folders =
+    usersFolder.getFoldersByName(
+      userId
+    );
+
+
+  if (!folders.hasNext()) {
+
+    throw new Error(
+      "ユーザーフォルダーが見つかりません。"
+    );
+
+  }
+
+
+  return folders.next();
+
+}
+
+
+/**
+ * ファイル移動
+ */
+function moveFileToFolder(fileId, folder) {
+
+
+  const file =
+    DriveApp.getFileById(
+      fileId
+    );
+
+
+  file.moveTo(
+    folder
+  );
+
+
+  return true;
+
+}
+
+
+
+========================================
+========== Utils.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Utils.gs
+ * 共通処理
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * 現在日時取得
+ */
+function getNow() {
+
+  return Utilities.formatDate(
+    new Date(),
+    DRIVEX.APP.TIMEZONE,
+    "yyyy/MM/dd HH:mm:ss"
+  );
+
+}
+
+
+/**
+ * 現在日付取得
+ */
+function getToday() {
+
+  return Utilities.formatDate(
+    new Date(),
+    DRIVEX.APP.TIMEZONE,
+    "yyyy/MM/dd"
+  );
+
+}
+
+
+/**
+ * ID生成
+ */
+function generateId(prefix) {
+
+  const time =
+    new Date().getTime();
+
+  const random =
+    Math.floor(Math.random() * 10000);
+
+  return (
+    prefix +
+    "_" +
+    time +
+    "_" +
+    random
+  );
+
+}
+
+
+/**
+ * 空チェック
+ */
+function isEmpty(value) {
+
+  return (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ""
+  );
+
+}
+
+
+/**
+ * 文字列化
+ */
+function toText(value) {
+
+  if (value === null || value === undefined) {
+
+    return "";
+
+  }
+
+  return String(value).trim();
+
+}
+
+
+/**
+ * 配列チェック
+ */
+function isArray(value) {
+
+  return Array.isArray(value);
+
+}
+
+
+/**
+ * メール形式チェック
+ */
+function isEmail(email) {
+
+  const regex =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  return regex.test(email);
+
+}
+
+
+/**
+ * 管理者判定
+ */
+function isAdmin(role) {
+
+  return (
+    role === DRIVEX.USER.ROLES.ADMIN
+  );
+
+}
+
+
+/**
+ * 一般ユーザー判定
+ */
+function isUser(role) {
+
+  return (
+    role === DRIVEX.USER.ROLES.USER
+  );
+
+}
+
+
+/**
+ * 成功レスポンス
+ */
+function success(message, data) {
+
+  return {
+
+    success: true,
+
+    message:
+      message || "",
+
+    data:
+      data || null
+
+  };
+
+}
+
+
+/**
+ * 失敗レスポンス
+ */
+function failure(message) {
+
+  return {
+
+    success: false,
+
+    message:
+      message || "エラー"
+
+  };
+
+}
+
+
+/**
+ * JSON変換
+ */
+function toJson(data) {
+
+  return JSON.stringify(data);
+
+}
+
+
+/**
+ * JSON解析
+ */
+function fromJson(data) {
+
+  try {
+
+    return JSON.parse(data);
+
+  } catch(e) {
+
+    return null;
+
+  }
+
+}
+
+
+/**
+ * ログ出力
+ */
+function debugLog(message) {
+
+  if (DRIVEX.SYSTEM.DEBUG) {
+
+    console.log(
+      "[" +
+      getNow() +
+      "] " +
+      message
+    );
+
+  }
+
+}
+
+
+
+========================================
+========== UserManager.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - UserManager.gs
+ * ユーザー管理
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * Usersシート取得
+ */
+function getUserSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      DRIVEX.SHEETS.USERS
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Usersシートがありません。"
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/**
+ * ユーザー一覧取得
+ */
+function getUserList() {
+
+
+  const sheet =
+    getUserSheet();
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  if (values.length <= 1) {
+
+    return [];
+
+  }
+
+
+  return values
+    .slice(1)
+    .map(function(row){
+
+
+      return {
+
+        userId: row[0],
+
+        password: row[1],
+
+        role: row[2],
+
+        status: row[3]
+
+      };
+
+
+    });
+
+
+}
+
+
+/**
+ * ユーザー取得
+ */
+function getUser(userId) {
+
+
+  const users =
+    getUserList();
+
+
+  for (
+    let i = 0;
+    i < users.length;
+    i++
+  ) {
+
+
+    if (
+      users[i].userId === userId
+    ) {
+
+      return users[i];
+
+    }
+
+
+  }
+
+
+  return null;
+
+
+}
+
+
+/**
+ * ユーザー存在確認
+ */
+function userExists(userId) {
+
+
+  return (
+    getUser(userId) !== null
+  );
+
+
+}
+
+
+/**
+ * ユーザー追加チェック
+ */
+function validateNewUser(
+  userId,
+  password
+) {
+
+
+  if (
+    isEmpty(userId)
+  ) {
+
+    return failure(
+      "ユーザーIDが空です。"
+    );
+
+  }
+
+
+  if (
+    isEmpty(password)
+  ) {
+
+    return failure(
+      "パスワードが空です。"
+    );
+
+  }
+
+
+  if (
+    userExists(userId)
+  ) {
+
+    return failure(
+      "このユーザーIDは既に存在します。"
+    );
+
+  }
+
+
+  return success(
+    "OK"
+  );
+
+
+}
+/**
+ * ユーザー追加
+ */
+function addUser(
+  userId,
+  password,
+  role
+) {
+
+
+  const check =
+    validateNewUser(
+      userId,
+      password
+    );
+
+
+  if (
+    !check.success
+  ) {
+
+    return check;
+
+  }
+
+
+  role =
+    role ||
+    DRIVEX.USER.ROLES.USER;
+
+
+
+  const sheet =
+    getUserSheet();
+
+
+
+  sheet.appendRow([
+
+    userId,
+
+    password,
+
+    role,
+
+    DRIVEX.USER.STATUS.ACTIVE
+
+  ]);
+
+
+
+  /**
+   * ユーザーフォルダー作成
+   */
+  createUserFolder(
+    userId
+  );
+
+
+
+  return success(
+    "ユーザーを追加しました。",
+    {
+      userId: userId
+    }
+  );
+
+
+}
+
+
+
+/**
+ * ユーザー削除
+ */
+function deleteUser(
+  userId
+) {
+
+
+  const sheet =
+    getUserSheet();
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === userId
+    ) {
+
+
+      sheet.deleteRow(
+        i + 1
+      );
+
+
+      return success(
+        "ユーザーを削除しました。"
+      );
+
+
+    }
+
+
+  }
+
+
+
+  return failure(
+    "ユーザーが見つかりません。"
+  );
+
+
+}
+
+
+
+/**
+ * パスワード変更
+ */
+function changePassword(
+  userId,
+  newPassword
+) {
+
+
+  const sheet =
+    getUserSheet();
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === userId
+    ) {
+
+
+      sheet
+        .getRange(
+          i + 1,
+          2
+        )
+        .setValue(
+          newPassword
+        );
+
+
+      return success(
+        "パスワードを変更しました。"
+      );
+
+
+    }
+
+
+  }
+
+
+
+  return failure(
+    "ユーザーが見つかりません。"
+  );
+
+
+}
+/**
+ * 権限変更
+ */
+function changeUserRole(
+  userId,
+  role
+) {
+
+
+  const sheet =
+    getUserSheet();
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === userId
+    ) {
+
+
+      sheet
+        .getRange(
+          i + 1,
+          3
+        )
+        .setValue(
+          role
+        );
+
+
+      return success(
+        "権限を変更しました。"
+      );
+
+
+    }
+
+
+  }
+
+
+
+  return failure(
+    "ユーザーが見つかりません。"
+  );
+
+
+}
+
+
+
+/**
+ * ユーザー状態変更
+ */
+function changeUserStatus(
+  userId,
+  status
+) {
+
+
+  const sheet =
+    getUserSheet();
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+
+    if (
+      values[i][0] === userId
+    ) {
+
+
+      sheet
+        .getRange(
+          i + 1,
+          4
+        )
+        .setValue(
+          status
+        );
+
+
+      return success(
+        "状態を変更しました。"
+      );
+
+
+    }
+
+
+  }
+
+
+
+  return failure(
+    "ユーザーが見つかりません。"
+  );
+
+
+}
+
+
+
+/**
+ * ユーザー情報取得（管理画面用）
+ */
+function getUserDetail(
+  userId
+) {
+
+
+  const user =
+    getUser(
+      userId
+    );
+
+
+  if (
+    !user
+  ) {
+
+    return failure(
+      "ユーザーが見つかりません。"
+    );
+
+  }
+
+
+  return success(
+    "取得しました。",
+    user
+  );
+
+
+}
+
+
+
+/**
+ * 全ユーザー数取得
+ */
+function getUserCount() {
+
+
+  const users =
+    getUserList();
+
+
+  return users.length;
+
+
+}
+
+
+
+========================================
+========== LogManager.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - LogManager.gs
+ * 操作ログ管理
+ * Version : 1.0.0
+ * ==========================================================
+ */
+
+
+/**
+ * Logsシート取得
+ */
+function getLogSheet() {
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+
+  const sheet =
+    ss.getSheetByName(
+      DRIVEX.SHEETS.LOGS
+    );
+
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Logsシートがありません。"
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+
+/**
+ * ログ追加
+ */
+function addLog(
+  userId,
+  action,
+  detail
+) {
+
+
+  if (
+    !DRIVEX.LOG.ENABLE
+  ) {
+
+    return false;
+
+  }
+
+
+
+  const sheet =
+    getLogSheet();
+
+
+
+  sheet.appendRow([
+
+
+    getNow(),
+
+
+    userId || "",
+
+
+    action || "",
+
+
+    detail || ""
+
+
+  ]);
+
+
+
+  return true;
+
+}
+
+
+
+/**
+ * ログインログ
+ */
+function logLogin(
+  userId
+) {
+
+
+  return addLog(
+
+    userId,
+
+    "LOGIN",
+
+    "ログインしました。"
+
+  );
+
+
+}
+
+
+
+/**
+ * ログアウトログ
+ */
+function logLogout(
+  userId
+) {
+
+
+  return addLog(
+
+    userId,
+
+    "LOGOUT",
+
+    "ログアウトしました。"
+
+  );
+
+
+}
+
+
+
+/**
+ * 操作ログ取得
+ */
+function getLogs() {
+
+
+  const sheet =
+    getLogSheet();
+
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+
+  if (
+    values.length <= 1
+  ) {
+
+    return [];
+
+  }
+
+
+
+  return values
+    .slice(1)
+    .map(function(row){
+
+
+      return {
+
+
+        time:
+          row[0],
+
+
+        userId:
+          row[1],
+
+
+        action:
+          row[2],
+
+
+        detail:
+          row[3]
+
+
+      };
+
+
+    });
+
+
+}
+/**
+ * ユーザー別ログ取得
+ */
+function getUserLogs(
+  userId
+) {
+
+
+  const logs =
+    getLogs();
+
+
+
+  return logs.filter(function(log){
+
+
+    return (
+      log.userId === userId
+    );
+
+
+  });
+
+
+}
+
+
+
+/**
+ * 操作別ログ取得
+ */
+function getActionLogs(
+  action
+) {
+
+
+  const logs =
+    getLogs();
+
+
+
+  return logs.filter(function(log){
+
+
+    return (
+      log.action === action
+    );
+
+
+  });
+
+
+}
+
+
+
+/**
+ * 最新ログ取得
+ */
+function getLatestLogs(
+  limit
+) {
+
+
+  const logs =
+    getLogs();
+
+
+
+  limit =
+    limit ||
+    50;
+
+
+
+  return logs
+    .slice(
+      -limit
+    )
+    .reverse();
+
+
+}
+
+
+
+/**
+ * ログ件数取得
+ */
+function getLogCount() {
+
+
+  return getLogs()
+    .length;
+
+
+}
+
+
+
+========================================
+========== Files.gs ==========
+========================================
+
+/**
+ * ==========================================================
+ * DriveX - Files.gs
+ * Google Drive ファイル管理
+ * Version : 2.0.0
+ * ==========================================================
+ */
+
+/**
+ * ログインユーザーのルートフォルダ取得
+ */
+function getUserDriveFolder() {
+
+  const user =
+    getCurrentUser();
+
+  if (!user) {
+
+    throw new Error(
+      "ログインしていません。"
+    );
+
+  }
+
+  const usersFolder =
+    getUsersFolder();
+
+  const folders =
+    usersFolder.getFoldersByName(
+      user.userId
+    );
+
+  if (!folders.hasNext()) {
+
+    throw new Error(
+      "ユーザーフォルダがありません。"
+    );
+
+  }
+
+  return folders.next();
+
+}
+
+
+/**
+ * フォルダ一覧取得
+ */
+function getFolderList(folder) {
+
+  const folders =
+    folder.getFolders();
+
+  const list = [];
+
+  while (folders.hasNext()) {
+
+    const item =
+      folders.next();
+
+    list.push({
+
+      id:
+        item.getId(),
+
+      name:
+        item.getName(),
+
+      type:
+        "folder",
+
+      icon:
+        "📁",
+
+      updated:
+        item.getLastUpdated()
+
+    });
+
+  }
+
+  return list;
+
+}
+
+
+/**
+ * MIMEタイプからアイコン取得
+ */
+function getFileIcon(mimeType) {
+
+  if (!mimeType) {
+
+    return "📄";
+
+  }
+
+  if (
+    mimeType.indexOf("image/") === 0
+  ) {
+
+    return "🖼";
+
+  }
+
+  if (
+    mimeType.indexOf("video/") === 0
+  ) {
+
+    return "🎥";
+
+  }
+
+  if (
+    mimeType.indexOf("audio/") === 0
+  ) {
+
+    return "🎵";
+
+  }
+
+  if (
+    mimeType === MimeType.PDF
+  ) {
+
+    return "📕";
+
+  }
+
+  if (
+    mimeType.indexOf("spreadsheet") !== -1 ||
+    mimeType.indexOf("excel") !== -1
+  ) {
+
+    return "📊";
+
+  }
+
+  if (
+    mimeType.indexOf("document") !== -1 ||
+    mimeType.indexOf("word") !== -1
+  ) {
+
+    return "📘";
+
+  }
+
+  if (
+    mimeType.indexOf("presentation") !== -1 ||
+    mimeType.indexOf("powerpoint") !== -1
+  ) {
+
+    return "📽";
+
+  }
+
+  if (
+    mimeType.indexOf("zip") !== -1 ||
+    mimeType.indexOf("compressed") !== -1
+  ) {
+
+    return "🗜";
+
+  }
+
+  return "📄";
+
+}
+/**
+ * ログイン中のユーザーのマイドライブ（または指定フォルダ）内のコンテンツを取得する
+ */
+function getMyDrive(targetFolderId) {
+  const user = getCurrentUser();
+  if (!user || !user.userId) {
+    return {
+      success: false,
+      message: "ログインしていません。"
+    };
+  }
+
+  try {
+    // 1. targetFolderId があればそのフォルダ、無ければユーザーのルートフォルダを取得
+    let targetFolder;
+    if (targetFolderId && isValidIdFormat(targetFolderId)) {
+      targetFolder = DriveApp.getFolderById(targetFolderId);
+    } else {
+      targetFolder = getUserDriveFolder();
+    }
+
+    // 2. フォルダ内の「サブフォルダ」を取得
+    const folders = [];
+    const folderIter = targetFolder.getFolders();
+    while (folderIter.hasNext()) {
+      const f = folderIter.next();
+      folders.push({
+        id: f.getId(),
+        name: f.getName(),
+        updatedAt: formatDate(f.getLastUpdated())
+      });
+    }
+
+    // 3. フォルダ内の「ファイル」を取得
+    const files = [];
+    const fileIter = targetFolder.getFiles();
+    while (fileIter.hasNext()) {
+      const f = fileIter.next();
+      files.push({
+        id: f.getId(),
+        name: f.getName(),
+        icon: getFileIcon(f.getMimeType()),
+        size: formatFileSize(f.getSize()),
+        updatedAt: formatDate(f.getLastUpdated()),
+        url: f.getUrl()
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        currentFolderId: targetFolder.getId(),
+        currentFolderName: targetFolder.getName(),
+        folders: folders,
+        files: files
+      }
+    };
+  } catch (e) {
+    return {
+      success: false,
+      message: "フォルダ情報の取得に失敗しました: " + e.message
+    };
+  }
+}
+/**
+ * 日付フォーマット調整
+ */
+function formatDate(date) {
+  if (!date) return "";
+  return Utilities.formatDate(
+    date,
+    DRIVEX.APP.TIMEZONE || "Asia/Tokyo",
+    "yyyy/MM/dd HH:mm"
+  );
+}
+
+/**
+ * ファイルサイズをKB/MB表記に変換
+ */
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+/**
+ * ファイルをユーザー専用フォルダにアップロード・保存する
+ * @param {Object} fileData - { name: ファイル名, mimeType: 形式, base64: データ }
+ */
+function uploadFileToDrive(fileData) {
+  const user = getCurrentUser();
+  if (!user || !user.userId) {
+    return {
+      success: false,
+      message: "ログインしていません。"
+    };
+  }
+
+  try {
+    // 1. ユーザー専用フォルダを取得
+    const userFolder = getUserDriveFolder();
+
+    // 2. Base64データからBlob（バイナリデータ）を作成
+    const bytes = Utilities.base64Decode(fileData.base64);
+    const blob = Utilities.newBlob(bytes, fileData.mimeType, fileData.name);
+
+    // 3. Driveのユーザーフォルダ内にファイルを作成
+    const newFile = userFolder.createFile(blob);
+
+    // 4. Filesシート（データベース）にも記録（存在する場合）
+    try {
+      saveFileInfo({
+        fileId: newFile.getId(),
+        userId: user.userId,
+        name: newFile.getName(),
+        type: newFile.getMimeType(),
+        size: formatFileSize(newFile.getSize())
+      });
+    } catch (sheetError) {
+      Logger.log("シート保存エラー（無視して続行）: " + sheetError.message);
+    }
+
+    return {
+      success: true,
+      message: "アップロードが完了しました！",
+      file: {
+        id: newFile.getId(),
+        name: newFile.getName(),
+        size: formatFileSize(newFile.getSize())
+      }
+    };
+  } catch (e) {
+    return {
+      success: false,
+      message: "アップロード処理に失敗しました: " + e.message
+    };
+  }
+}
+/**
+ * 時間異常・メモリ対策版：uploadFileWithProgress
+ */
+function uploadFileWithProgress(file) {
+  const chunkSizeMB = 3; // メモリ負荷軽減のため3MBに落とす
+  const CHUNK_SIZE = chunkSizeMB * 1024 * 1024;
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  
+  showUploadProgress(file.name, file.size);
+  
+  let currentChunk = 0;
+  let driveFileId = null;
+  let progressTimer = null;
+  let lastChunkStartTime = 0;
+  let estimatedSpeedBps = 0;
+
+  // 1. Googleサーバーから過去の学習スピードを取得
+  google.script.run
+    .withSuccessHandler(function(savedSpeed) {
+      // 異常に遅い値が入っている場合はクリア (100KB/s未満はリセット)
+      estimatedSpeedBps = (savedSpeed && savedSpeed > 100000) ? savedSpeed : 0;
+      startChunkUpload();
+    })
+    .withFailureHandler(function() {
+      startChunkUpload();
+    })
+    .getUserUploadSpeed();
+
+  function startChunkUpload() {
+    async function sendNextChunk() {
+      if (currentChunk >= totalChunks) {
+        clearInterval(progressTimer);
+        updateProgressBar(100, file.size, file.size);
+        updateProgressStatus('処理完了！');
+
+        if (estimatedSpeedBps > 100000) {
+          google.script.run.saveUserUploadSpeed(estimatedSpeedBps);
+        }
+
+        setTimeout(() => {
+          hideUploadProgress();
+          alert("アップロードが完了しました！");
+          loadMyDrive();
+        }, 300);
+        return;
+      }
+
+      const start = currentChunk * CHUNK_SIZE;
+      const end = Math.min(file.size, start + CHUNK_SIZE);
+      const chunkBlob = file.slice(start, end);
+      const chunkSize = end - start;
+
+      const base64Data = await readBlobAsBase64(chunkBlob);
+
+      lastChunkStartTime = Date.now();
+      let currentSimulatedBytes = start;
+
+      // 通信速度の計算（安全ガード付き）
+      // スピード不明時は 1MB/s を仮定（200秒などの異常な待ち時間を防ぐ）
+      const safeSpeedBps = estimatedSpeedBps > 100000 ? estimatedSpeedBps : (1024 * 1024);
+      const stepBytes = (safeSpeedBps / 10); 
+
+      clearInterval(progressTimer);
+      progressTimer = setInterval(() => {
+        if (currentSimulatedBytes < end - (CHUNK_SIZE * 0.05)) {
+          currentSimulatedBytes += stepBytes;
+          const percent = Math.min(99, Math.floor((currentSimulatedBytes / file.size) * 100));
+          
+          const remainingBytes = file.size - currentSimulatedBytes;
+          const remainingSec = Math.min(180, Math.ceil(remainingBytes / safeSpeedBps)); // 最大でも180秒にガード
+          
+          updateProgressBar(percent, currentSimulatedBytes, file.size);
+          
+          const speedText = `${(safeSpeedBps / (1024 * 1024)).toFixed(1)} MB/s`;
+          const timeText = remainingSec > 0 ? `約 ${remainingSec} 秒` : '計算中...';
+          updateProgressStatus(`送信中 (${currentChunk + 1}/${totalChunks}) | 速度: ${speedText} | 残り: ${timeText}`);
+        }
+      }, 100);
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          clearInterval(progressTimer);
+
+          if (!res.success) {
+            hideUploadProgress();
+            alert("アップロード失敗: " + res.message);
+            return;
+          }
+
+          // 今回の通信スピードを計算（極端な遅延は除外）
+          const durationSec = (Date.now() - lastChunkStartTime) / 1000;
+          if (durationSec > 0.5) {
+            const currentSpeed = chunkSize / durationSec;
+            // 異常な遅さ（処理の詰まり）で数値を汚さないための制御
+            if (currentSpeed > 100000) { 
+              estimatedSpeedBps = estimatedSpeedBps === 0 ? currentSpeed : (estimatedSpeedBps * 0.7 + currentSpeed * 0.3);
+            }
+          }
+
+          driveFileId = res.fileId;
+          currentChunk++;
+          
+          const actualUploadedBytes = Math.min(currentChunk * CHUNK_SIZE, file.size);
+          const actualPercent = Math.round((actualUploadedBytes / file.size) * 100);
+          updateProgressBar(actualPercent, actualUploadedBytes, file.size);
+
+          sendNextChunk();
+        })
+        .withFailureHandler(function(err) {
+          clearInterval(progressTimer);
+          hideUploadProgress();
+          alert("通信エラーが発生しました: " + err.message);
+        })
+        .saveChunk({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          base64Data: base64Data,
+          fileId: driveFileId,
+          isFirst: (currentChunk === 0)
+        });
+    }
+
+    sendNextChunk();
+  }
+}
+/**
+ * ユーザーごとの平均通信速度（Bps）を取得する
+ */
+function getUserUploadSpeed() {
+  try {
+    var userProps = PropertiesService.getUserProperties();
+    var speed = userProps.getProperty('AVERAGE_UPLOAD_SPEED_BPS');
+    return speed ? parseFloat(speed) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
+ * ユーザーごとの平均通信速度（Bps）を保存する
+ */
+function saveUserUploadSpeed(speedBps) {
+  try {
+    var userProps = PropertiesService.getUserProperties();
+    userProps.setProperty('AVERAGE_UPLOAD_SPEED_BPS', speedBps.toString());
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+/**
+ * 直接アップロード用のセッションURL（Google公式 Resumable API）を発行
+ */
+function createUploadSession(data) {
+  try {
+    var userFolder = getUserDriveFolder();
+    var url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable";
+    
+    var metadata = {
+      name: data.fileName,
+      mimeType: data.mimeType,
+      parents: [userFolder.getId()]
+    };
+
+    var options = {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Authorization: "Bearer " + ScriptApp.getOAuthToken()
+      },
+      payload: JSON.stringify(metadata),
+      muteHttpExceptions: true
+    };
+
+    var response = UrlFetchApp.fetch(url, options);
+    var locationUrl = response.getHeaders()["Location"] || response.getHeaders()["location"];
+
+    if (!locationUrl) {
+      return { success: false, message: "アップロードURLの取得に失敗しました。" };
+    }
+
+    return { success: true, uploadUrl: locationUrl };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+/**
+ * アップロード完了後、管理用シート等へ記録する
+ */
+function finalizeUpload(data) {
+  try {
+    var user = getCurrentUser();
+    saveFileInfo({
+      fileId: data.fileId,
+      userId: user ? user.userId : "guest",
+      name: data.fileName,
+      type: data.mimeType,
+      size: formatFileSize(data.fileSize)
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+/**
+ * セキュリティチェック：ID文字列の形式を検証（パストラバーサル・不正入力対策）
+ */
+function isValidIdFormat(id) {
+  if (!id || typeof id !== 'string') return false;
+  // Google Drive ID 形式（英数字、ハイフン、アンダースコア）のみ許可
+  return /^[a-zA-Z0-9_-]{10,}$/.test(id);
+}
+
+/**
+ * 新規フォルダーを作成する
+ */
+function createNewFolder(folderName, parentFolderId) {
+  try {
+    if (!folderName || folderName.trim() === "") {
+      return { success: false, message: "フォルダー名を入力してください。" };
+    }
+    
+    // サニタイズ（悪意のある記号の無効化）
+    var safeName = folderName.replace(/[<>"']/g, "");
+
+    var targetFolder;
+    if (parentFolderId && isValidIdFormat(parentFolderId)) {
+      targetFolder = DriveApp.getFolderById(parentFolderId);
+    } else {
+      targetFolder = getUserDriveFolder(); // ルートフォルダー
+    }
+
+    var newFolder = targetFolder.createFolder(safeName);
+
+    // 管理用記録（安全対策を兼ねて記述）
+    try {
+      var user = getCurrentUser();
+      saveFileInfo({
+        fileId: newFolder.getId(),
+        userId: user ? user.userId : "guest",
+        name: safeName,
+        type: "folder",
+        size: "-"
+      });
+    } catch(e) {}
+
+    return { success: true, folderId: newFolder.getId() };
+  } catch (e) {
+    return { success: false, message: "フォルダー作成エラー: " + e.message };
+  }
+}
+
+/**
+ * ファイル/フォルダーのダウンロード・プレビュー用URLを取得
+ */
+function getDownloadUrl(fileId) {
+  try {
+    if (!isValidIdFormat(fileId)) {
+      return { success: false, message: "無効なファイルIDです。" };
+    }
+
+    var file = DriveApp.getFileById(fileId);
+    
+    // ★シークレットモード（未ログイン状態）対策：権限を「リンクを知っている全員」に自動変更
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    return {
+      success: true,
+      downloadUrl: "https://drive.google.com/uc?export=download&id=" + fileId,
+      previewUrl: "https://drive.google.com/file/d/" + fileId + "/preview",
+      fileName: file.getName()
+    };
+  } catch (e) {
+    return { success: false, message: "URL取得エラー: " + e.message };
+  }
+}
+
+/**
+ * ファイルまたはフォルダーを別のフォルダーへ移動する
+ */
+function moveItemToFolder(itemId, targetFolderId, isFolder) {
+  try {
+    if (!isValidIdFormat(itemId) || !isValidIdFormat(targetFolderId)) {
+      return { success: false, message: "無効なIDが指定されました。" };
+    }
+
+    var targetFolder = DriveApp.getFolderById(targetFolderId);
+
+    if (isFolder) {
+      var folder = DriveApp.getFolderById(itemId);
+      
+      // 自分自身や配下への循環移動を防止
+      if (itemId === targetFolderId) {
+        return { success: false, message: "同じフォルダーの中には移動できません。" };
+      }
+      
+      folder.moveTo(targetFolder);
+    } else {
+      var file = DriveApp.getFileById(itemId);
+      file.moveTo(targetFolder);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: "移動エラー: " + e.message };
+  }
+}
+/**
+ * お気に入り追加・解除（トグル処理）
+ */
+function toggleFavorite(fileId) {
+  const user = getCurrentUser();
+  if (!user || !user.userId) {
+    return { success: false, message: "ログインしていません。" };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(DRIVEX.SHEETS.FAVORITES);
+  if (!sheet) return { success: false, message: "Favoritesシートが存在しません。" };
+
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] === user.userId && values[i][1] === fileId) {
+      sheet.deleteRow(i + 1);
+      return { success: true, message: "お気に入りを解除しました。" };
+    }
+  }
+
+  sheet.appendRow([user.userId, fileId, getNow()]);
+  return { success: true, message: "お気に入りに追加しました！" };
+}
+
+/**
+ * お気に入り一覧を取得する
+ */
+function getFavoriteList() {
+  const user = getCurrentUser();
+  if (!user || !user.userId) return { success: false, message: "未ログイン" };
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(DRIVEX.SHEETS.FAVORITES);
+    if (!sheet) return { success: true, data: [] };
+
+    const favValues = sheet.getDataRange().getValues();
+    const userFavIds = favValues.slice(1)
+      .filter(function(row) { return row[0] === user.userId; })
+      .map(function(row) { return row[1]; });
+
+    const files = [];
+    userFavIds.forEach(function(id) {
+      try {
+        const f = DriveApp.getFileById(id);
+        files.push({
+          id: f.getId(),
+          name: f.getName(),
+          icon: getFileIcon(f.getMimeType()),
+          size: formatFileSize(f.getSize()),
+          updatedAt: formatDate(f.getLastUpdated())
+        });
+      } catch (e) {
+        // ファイルが削除されている場合はスキップ
+      }
+    });
+
+    return { success: true, data: files };
+  } catch (e) {
+    return { success: false, message: "お気に入りの取得に失敗しました: " + e.message };
+  }
+}
+
+
+
+========================================
+========== CSS.html ==========
+========================================
+
+<style>
+
+/* ==========================
+   DriveX Login CSS
+   ========================== */
+
+
+/* 全体 */
+body {
+
+  margin: 0;
+
+  padding: 0;
+
+  height: 100vh;
+
+  background: #f3f4f6;
+
+  font-family:
+    "Noto Sans JP",
+    Arial,
+    sans-serif;
+
+}
+
+
+/* 中央配置 */
+.login-wrapper {
+
+  width: 100%;
+
+  height: 100vh;
+
+  display: flex;
+
+  justify-content: center;
+
+  align-items: center;
+
+}
+
+
+/* ログインカード */
+.login-card {
+
+  width: 360px;
+
+  background: white;
+
+  padding: 40px;
+
+  border-radius: 16px;
+
+  box-shadow:
+    0 10px 30px rgba(0,0,0,0.12);
+
+  text-align: center;
+
+}
+
+
+/* ロゴ */
+.logo {
+
+  font-size: 36px;
+
+  font-weight: bold;
+
+  color: #2563eb;
+
+  margin-bottom: 8px;
+
+}
+
+
+/* サブタイトル */
+.subtitle {
+
+  color: #666;
+
+  font-size: 14px;
+
+  margin-bottom: 30px;
+
+}
+
+
+
+/* 入力エリア */
+.form-group {
+
+  text-align: left;
+
+  margin-bottom: 18px;
+
+}
+
+
+.form-group label {
+
+  display: block;
+
+  font-size: 14px;
+
+  margin-bottom: 6px;
+
+  color: #333;
+
+}
+
+
+
+.form-group input {
+
+
+  width: 100%;
+
+  box-sizing: border-box;
+
+  padding: 12px;
+
+  border:
+
+    1px solid #ddd;
+
+  border-radius: 8px;
+
+  font-size: 15px;
+
+
+}
+
+
+.form-group input:focus {
+
+  outline: none;
+
+  border-color: #2563eb;
+
+}
+
+
+/* ログインボタン */
+#loginBtn {
+
+
+  width: 100%;
+
+  padding: 13px;
+
+  margin-top: 10px;
+
+  border: none;
+
+  border-radius: 8px;
+
+  background: #2563eb;
+
+  color: white;
+
+  font-size: 16px;
+
+  cursor: pointer;
+
+
+}
+
+
+
+#loginBtn:hover {
+
+  opacity: 0.9;
+
+}
+
+
+#loginBtn:disabled {
+
+  background: #94a3b8;
+
+  cursor: not-allowed;
+
+}
+
+
+
+/* メッセージ */
+.message {
+
+  margin-top: 15px;
+
+  font-size: 14px;
+
+  color: #dc2626;
+
+}
+
+
+
+/* バージョン */
+.version {
+
+  margin-top: 25px;
+
+  color: #999;
+
+  font-size: 12px;
+
+}
+
+
+/* スマホ対応 */
+@media(max-width:480px){
+
+
+  .login-card {
+
+    width: 85%;
+
+    padding: 30px;
+
+  }
+
+
+}
+
+
+</style>
+
+
+
+========================================
+========== Dashboard.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top">
+  <style>
+    body {
+      margin: 0;
+      font-family: "Noto Sans JP", Arial, sans-serif;
+      background: #f3f4f6;
+    }
+
+    /* ヘッダー */
+    .header {
+      height: 60px;
+      background: #2563eb;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 25px;
+    }
+
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+    }
+
+    .user-area {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .user-info {
+      text-align: right;
+    }
+
+    .role {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .logout {
+      background: white;
+      color: #2563eb;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    /* レイアウト */
+    .container {
+      display: flex;
+      height: calc(100vh - 60px);
+    }
+
+    /* サイドバー */
+    .sidebar {
+      width: 260px;
+      background: white;
+      padding: 24px 16px;
+      box-sizing: border-box;
+    }
+
+    .menu {
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 20px;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+
+    .menu:hover {
+      background: #eef2ff;
+    }
+
+    .menu.active {
+      background: #dbeafe;
+      color: #2563eb;
+      font-weight: bold;
+    }
+
+    /* メインコンテンツエリア */
+    .main {
+      flex: 1;
+      padding: 30px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .card {
+      background: white;
+      padding: 25px;
+      border-radius: 15px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    /* マイドライブ ツールバー */
+    .drive-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 15px;
+    }
+
+    .drive-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: bold;
+      color: #1f2937;
+    }
+
+    .drive-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-action {
+      background: #f3f4f6;
+      border: 1px solid #d1d5db;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 14px;
+      color: #374151;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .btn-action:hover {
+      background: #e5e7eb;
+      border-color: #9ca3af;
+    }
+
+    .search {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-sizing: border-box;
+      font-size: 15px;
+      margin-bottom: 20px;
+    }
+
+    /* カードグリッドレイアウト */
+    .section-title {
+      font-size: 16px;
+      font-weight: bold;
+      color: #4b5563;
+      margin: 20px 0 10px 0;
+      border-left: 4px solid #2563eb;
+      padding-left: 8px;
+    }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+
+    .item-card {
+      position: relative;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 15px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      user-select: none;
+    }
+
+    .item-card:hover {
+      border-color: #2563eb;
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.15);
+      transform: translateY(-2px);
+    }
+
+    .item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .item-name {
+      font-weight: bold;
+      font-size: 14px;
+      color: #1f2937;
+      margin-bottom: 8px;
+      word-break: break-all;
+      flex: 1;
+    }
+
+    /* 三点リーダーボタン */
+    .btn-more {
+      background: none;
+      border: none;
+      font-size: 16px;
+      color: #6b7280;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+
+    .btn-more:hover {
+      background-color: #f3f4f6;
+      color: #111827;
+    }
+
+    .item-meta {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .area {
+      min-height: 400px;
+      border: 2px dashed #ddd;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 10px;
+    }
+
+    /* コンテキストメニュー（右クリック / 三点リーダー共通） */
+    .context-menu {
+      display: none;
+      position: fixed;
+      z-index: 10000;
+      width: 160px;
+      background-color: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      padding: 4px 0;
+    }
+
+    .context-menu-item {
+      padding: 8px 14px;
+      font-size: 13px;
+      color: #374151;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .context-menu-item:hover {
+      background-color: #f3f4f6;
+      color: #2563eb;
+    }
+
+    .context-menu-item.danger:hover {
+      background-color: #fef2f2;
+      color: #ef4444;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">
+      DriveX
+    </div>
+    <div class="user-area">
+      <div class="user-info">
+        <div id="userId">
+          読み込み中...
+        </div>
+        <div id="role" class="role">
+        </div>
+      </div>
+      <button class="logout" onclick="logout()">
+        ログアウト
+      </button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <div class="menu active" onclick="changePage(this,'home')">
+        🏠 ホーム
+      </div>
+      <div class="menu" onclick="changePage(this,'files')">
+        📁 マイドライブ
+      </div>
+      <div class="menu" onclick="changePage(this,'favorite')">
+        ⭐ お気に入り
+      </div>
+      <div class="menu" onclick="changePage(this,'trash')">
+        🗑 ゴミ箱
+      </div>
+      <div id="userManagerMenu" class="menu" style="display:none;" onclick="changePage(this,'users')">
+        👥 ユーザー管理
+      </div>
+      <div class="menu" onclick="changePage(this,'setting')">
+        ⚙ 設定
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="card" id="content">
+        <h2>
+          ホーム
+        </h2>
+        <p>
+          DriveXへようこそ
+        </p>
+        <div class="area">
+          📂 ファイル管理エリア
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ポップアップメニュー -->
+  <div id="contextMenu" class="context-menu">
+    <div class="context-menu-item" onclick="handleMenuAction('preview')">👁️ プレビュー</div>
+    <div class="context-menu-item" onclick="handleMenuAction('download')">📥 ダウンロード</div>
+    <div class="context-menu-item" onclick="handleMenuAction('favorite')">⭐ お気に入り追加/解除</div>
+    <div class="context-menu-item" onclick="handleMenuAction('rename')">✏️ 名前変更</div>
+    <div class="context-menu-item danger" onclick="handleMenuAction('delete')">🗑️ ゴミ箱</div>
+  </div>
+
+  <script>
+    let currentFolderId = "";
+    let selectedItem = null; // 右クリック/三点リーダーで選択中のファイル・フォルダ情報
+
+    /**
+     * ユーザー情報取得
+     */
+    function loadUser() {
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (!result || !result.success) {
+            return;
+          }
+
+          const user = result.data;
+
+          const userIdElem = document.getElementById("userId");
+          if (userIdElem) userIdElem.innerText = user.userId;
+
+          const roleElem = document.getElementById("role");
+          const menuElem = document.getElementById("userManagerMenu");
+
+          if (user.role === "admin") {
+            if (roleElem) roleElem.innerText = "🛡 管理者";
+            if (menuElem) menuElem.style.display = "block";
+          } else {
+            if (roleElem) roleElem.innerText = "👤 一般ユーザー";
+          }
+        })
+        .withFailureHandler(function(error) {
+          console.error(error);
+        })
+        .getLoginUserInfo();
+    }
+
+    /**
+     * ログアウト
+     */
+    function logout() {
+      google.script.run
+        .withSuccessHandler(function(url) {
+          window.top.location.href = url + "?page=Login";
+        })
+        .withFailureHandler(function(error) {
+          console.error(error);
+          alert("ログアウトに失敗しました");
+        })
+        .getWebAppUrl();
+    }
+
+    /**
+     * ページ切替
+     */
+    function changePage(menu, page) {
+      document.querySelectorAll(".menu").forEach(function(item) {
+        item.classList.remove("active");
+      });
+
+      if (menu) {
+        menu.classList.add("active");
+      }
+
+      const content = document.getElementById("content");
+      if (!content) return;
+
+      const pages = {
+        home: `
+          <h2>ホーム</h2>
+          <p>DriveXへようこそ</p>
+          <div class="area">📂 ファイル管理エリア（現在開発中です）</div>
+        `,
+        files: `
+          <div class="drive-header">
+            <h2 class="drive-title" id="currentFolderTitle">📁 マイドライブ</h2>
+            <div class="drive-actions">
+              <button class="btn-action" onclick="createFolder()">📁 新規フォルダ</button>
+              <button class="btn-action" onclick="triggerFileUpload()">📤 アップロード</button>
+              <button class="btn-action" onclick="loadMyDrive()">🔄 更新</button>
+            </div>
+          </div>
+          <div id="breadcrumbArea" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;"></div>
+          <input class="search" placeholder="🔍 ファイルを検索...">
+          <div id="driveContent" class="area">読み込み中...</div>
+        `,
+        favorite: `
+          <h2>お気に入り</h2>
+          <div class="area">⭐ お気に入り一覧</div>
+        `,
+        trash: `
+          <h2>ゴミ箱</h2>
+          <div class="area">🗑 ゴミ箱</div>
+        `,
+        users: `
+          <h2>ユーザー管理</h2>
+          <div class="area">👥 ユーザー管理画面</div>
+        `,
+        setting: `
+          <h2>設定</h2>
+          <div class="area">⚙ 設定画面</div>
+        `
+      };
+
+      if (pages[page]) {
+        content.innerHTML = pages[page];
+      }
+
+      if (page === "files") {
+        loadMyDrive();
+      } else if (page === "favorite") {
+        loadFavorites(); // ★ここを追加
+      }
+    }
+
+    /* ==========================================================
+       マイドライブ取得・描画処理
+       ========================================================== */
+    function loadMyDrive() {
+      const targetArea = document.getElementById("driveContent");
+      if (targetArea) {
+        targetArea.innerHTML = "読み込み中...";
+      }
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (!result || !result.success) {
+            alert(result ? result.message : "データの取得に失敗しました");
+            return;
+          }
+          renderDrive(result.data);
+        })
+        .withFailureHandler(function(error) {
+          console.error(error);
+          alert("ファイル一覧を取得できませんでした。");
+        })
+        .getMyDrive();
+    }
+
+    function renderDrive(data) {
+      currentFolderId = data.currentFolderId;
+
+      const titleElem = document.getElementById("currentFolderTitle");
+      if (titleElem) {
+        titleElem.innerText = "📁 " + (data.currentFolderName || "マイドライブ");
+      }
+
+      const navArea = document.getElementById("breadcrumbArea");
+      if (navArea) {
+        if (data.currentFolderName !== "マイドライブ") {
+          navArea.innerHTML = `
+            <button class="btn-action" onclick="goBackFolder('${data.parentFolderId || ''}')">
+              ⬅ 戻る
+            </button>
+            <span style="font-size: 14px; color: #6b7280; font-weight: bold;">
+              現在位置: ${data.currentFolderName}
+            </span>
+          `;
+        } else {
+          navArea.innerHTML = "";
+        }
+      }
+
+      let html = "";
+
+      // フォルダ一覧
+      html += "<div class='section-title'>【 フォルダ 】</div>";
+      html += "<div class='grid-container'>";
+      if (data.folders && data.folders.length > 0) {
+        data.folders.forEach(function(folder) {
+          const itemJson = escapeHtml(JSON.stringify({ id: folder.id, name: folder.name, type: 'folder' }));
+          html += `
+            <div class='item-card' 
+                 ondblclick="openFolder('${folder.id}')" 
+                 oncontextmenu="showContextMenu(event, ${itemJson})">
+              <div class='item-header'>
+                <div class='item-name'>📁 ${folder.name}</div>
+                <button class='btn-more' onclick="showContextMenu(event, ${itemJson})">⋮</button>
+              </div>
+              <div class='item-meta'>${folder.updatedAt || ""}</div>
+            </div>
+          `;
+        });
+      } else {
+        html += "<div style='color:#9ca3af; font-size:14px;'>フォルダはありません</div>";
+      }
+      html += "</div>";
+
+      // ファイル一覧
+      html += "<div class='section-title' style='margin-top:20px;'>【 ファイル 】</div>";
+      html += "<div class='grid-container'>";
+      if (data.files && data.files.length > 0) {
+        data.files.forEach(function(file) {
+          const itemJson = escapeHtml(JSON.stringify({ id: file.id, name: file.name, type: 'file', url: file.url }));
+          html += `
+            <div class='item-card' 
+                 oncontextmenu="showContextMenu(event, ${itemJson})">
+              <div class='item-header'>
+                <div class='item-name'>${file.icon || "📄"} ${file.name}</div>
+                <button class='btn-more' onclick="showContextMenu(event, ${itemJson})">⋮</button>
+              </div>
+              <div class='item-meta'>${file.size || ""}</div>
+            </div>
+          `;
+        });
+      } else {
+        html += "<div style='color:#9ca3af; font-size:14px;'>ファイルはありません</div>";
+      }
+      html += "</div>";
+
+      const targetArea = document.getElementById("driveContent");
+      if (targetArea) {
+        targetArea.innerHTML = html;
+      }
+    }
+
+    /* ==========================================================
+       コンテキストメニュー・三点リーダー制御
+       ========================================================== */
+    function showContextMenu(e, item) {
+      e.preventDefault();
+      e.stopPropagation();
+      selectedItem = item;
+
+      const menu = document.getElementById("contextMenu");
+      menu.style.display = "block";
+      menu.style.left = e.clientX + "px";
+      menu.style.top = e.clientY + "px";
+    }
+
+    function closeContextMenu() {
+      const menu = document.getElementById("contextMenu");
+      if (menu) menu.style.display = "none";
+    }
+
+    function handleMenuAction(action) {
+      closeContextMenu();
+      if (!selectedItem) return;
+
+      if (action === 'preview' || action === 'download') {
+        if (selectedItem.type !== 'file') {
+          alert("フォルダの操作には対応していません。");
+          return;
+        }
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            if (res && res.success) {
+              // プレビューかダウンロードかに応じて開くURLを切り替え
+              const targetUrl = (action === 'preview') ? res.previewUrl : res.downloadUrl;
+              window.open(targetUrl, '_blank');
+            } else {
+              alert((res && res.message) ? res.message : "処理に失敗しました。");
+            }
+          })
+          .withFailureHandler(function(err) {
+            alert("エラーが発生しました: " + err.message);
+          })
+          .getDownloadUrl(selectedItem.id);
+
+      } else if (action === 'favorite') {
+        google.script.run
+          .withSuccessHandler(function(res) {
+            alert(res && res.message ? res.message : "処理が完了しました。");
+          })
+          .toggleFavorite(selectedItem.id);
+
+      } else if (action === 'rename') {
+        const newName = prompt("新しい名前を入力してください:", selectedItem.name);
+        if (newName) alert(`「${selectedItem.name}」を「${newName}」に変更処理（GAS側の関数接続が必要）`);
+
+      } else if (action === 'delete') {
+        if (confirm(`「${selectedItem.name}」をゴミ箱に移動しますか？`)) {
+          alert(`「${selectedItem.name}」の移動処理（GAS側の関数接続が必要）`);
+        }
+      }
+    }
+
+    function goBackFolder(parentId) {
+      if (parentId) {
+        openFolder(parentId);
+      } else {
+        loadMyDrive();
+      }
+    }
+
+    function openFolder(folderId) {
+      const targetArea = document.getElementById("driveContent");
+      if (targetArea) targetArea.innerHTML = "読み込み中...";
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (!result || !result.success) {
+            alert(result ? result.message : "フォルダを開けませんでした");
+            return;
+          }
+          renderDrive(result.data);
+        })
+        .withFailureHandler(function(error) {
+          console.error(error);
+          alert("フォルダの移動に失敗しました。");
+        })
+        .getMyDrive(folderId);
+    }
+
+    /* ==========================================================
+       アップロード・フォルダ作成関連処理
+       ========================================================== */
+    function triggerFileUpload() {
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.onchange = function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          uploadFileWithProgress(file);
+        }
+      };
+      fileInput.click();
+    }
+
+    function uploadFileWithProgress(file) {
+      showUploadProgress(file.name, file.size);
+      updateProgressStatus("アップロード準備中...");
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (!res.success) {
+            hideUploadProgress();
+            alert("準備エラー: " + res.message);
+            return;
+          }
+          executeResumableUpload(file, res.uploadUrl);
+        })
+        .withFailureHandler(function(err) {
+          hideUploadProgress();
+          alert("通信エラー: " + err.message);
+        })
+        .createUploadSession({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream'
+        });
+    }
+
+    function executeResumableUpload(file, uploadUrl) {
+      const CHUNK_SIZE = 1024 * 1024 * 2;
+      let start = 0;
+
+      function sendNextChunk() {
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", uploadUrl, true);
+        xhr.setRequestHeader("Content-Range", `bytes ${start}-${end - 1}/${file.size}`);
+
+        xhr.upload.onprogress = function(e) {
+          if (e.lengthComputable) {
+            const currentLoaded = start + e.loaded;
+            const percent = Math.floor((currentLoaded / file.size) * 100);
+            updateProgressBar(percent, currentLoaded, file.size);
+            
+            const mbLoaded = (currentLoaded / (1024 * 1024)).toFixed(1);
+            const mbTotal = (file.size / (1024 * 1024)).toFixed(1);
+            updateProgressStatus(`送信中: ${mbLoaded} MB / ${mbTotal} MB (${percent}%)`);
+          }
+        };
+
+        xhr.onload = function() {
+          if (xhr.status === 308) {
+            start = end;
+            sendNextChunk();
+          } 
+          else if (xhr.status === 200 || xhr.status === 201) {
+            updateProgressBar(100, file.size, file.size);
+            updateProgressStatus("ファイル情報を記録中...");
+
+            var uploadedFileId = "";
+            try {
+              var response = JSON.parse(xhr.responseText);
+              uploadedFileId = response.id;
+            } catch(e) {}
+
+            google.script.run
+              .withSuccessHandler(function() {
+                finishProcess();
+              })
+              .withFailureHandler(function() {
+                finishProcess();
+              })
+              .finalizeUpload({
+                fileId: uploadedFileId,
+                fileName: file.name,
+                mimeType: file.type || 'application/octet-stream',
+                fileSize: file.size
+              });
+          } else {
+            hideUploadProgress();
+            alert("アップロード失敗 (ステータス: " + xhr.status + ")");
+          }
+        };
+
+        xhr.onerror = function() {
+          if (end >= file.size) {
+            updateProgressBar(100, file.size, file.size);
+            finishProcess();
+          } else {
+            hideUploadProgress();
+            alert("ネットワークエラーが発生しました。");
+          }
+        };
+
+        xhr.send(chunk);
+      }
+
+      function finishProcess() {
+        hideUploadProgress();
+        alert("アップロードが完了しました！");
+        if (typeof loadMyDrive === "function") {
+          loadMyDrive();
+        }
+      }
+
+      sendNextChunk();
+    }
+
+    /* プログレスバーUI */
+    function showUploadProgress(fileName, totalBytes) {
+      let modal = document.getElementById('uploadProgressModal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'uploadProgressModal';
+        modal.style.cssText = `
+          position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+          background: rgba(0,0,0,0.5); display: flex; align-items: center;
+          justify-content: center; z-index: 9999;
+        `;
+        modal.innerHTML = `
+          <div style="background: #fff; padding: 24px; border-radius: 12px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+            <h3 style="margin-top:0; font-size:16px;" id="uploadFileName">アップロード中...</h3>
+            <div style="background:#e0e0e0; border-radius:8px; height:12px; width:100%; overflow:hidden; margin:16px 0;">
+              <div id="uploadProgressBar" style="background:#4285f4; height:100%; width:0%; transition:width 0.2s;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:12px; color:#666;">
+              <span id="uploadProgressText">0%</span>
+              <span id="uploadSizeText">0 MB / 0 MB</span>
+            </div>
+            <div id="uploadStatusSub" style="font-size:11px; color:#888; text-align:center; margin-top:8px;">準備中...</div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+      }
+      
+      document.getElementById('uploadFileName').innerText = "アップロード中: " + fileName;
+      document.getElementById('uploadProgressBar').style.width = '0%';
+      document.getElementById('uploadProgressText').innerText = '0%';
+      document.getElementById('uploadSizeText').innerText = `0 MB / ${formatBytes(totalBytes)}`;
+      document.getElementById('uploadStatusSub').innerText = '準備中...';
+      modal.style.display = 'flex';
+    }
+
+    function updateProgressBar(percent, loadedBytes, totalBytes) {
+      const bar = document.getElementById('uploadProgressBar');
+      const text = document.getElementById('uploadProgressText');
+      const sizeText = document.getElementById('uploadSizeText');
+      if (bar) bar.style.width = percent + '%';
+      if (text) text.innerText = percent + '%';
+      if (sizeText) sizeText.innerText = `${formatBytes(loadedBytes)} / ${formatBytes(totalBytes)}`;
+    }
+
+    function updateProgressStatus(statusText) {
+      const sub = document.getElementById('uploadStatusSub');
+      if (sub) sub.innerText = statusText;
+    }
+
+    function hideUploadProgress() {
+      const modal = document.getElementById('uploadProgressModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function createFolder() {
+      const folderName = prompt("新しいフォルダの名前を入力してください:");
+      if (!folderName) return;
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res.success) {
+            loadMyDrive();
+          } else {
+            alert(res.message);
+          }
+        })
+        .createNewFolder(folderName, currentFolderId);
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+    }
+
+    // 初期化設定
+    window.addEventListener("DOMContentLoaded", function() {
+      loadUser();
+      changePage(null, 'files');
+      document.addEventListener('click', closeContextMenu);
+    });
+  </script>
+</body>
+</html>
+
+
+
+========================================
+========== Header.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
+
+
+========================================
+========== JS.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
+
+
+========================================
+========== Login.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<base target="_top">
+
+<?!= include("CSS"); ?>
+
+
+<style>
+
+
+body{
+
+margin:0;
+
+background:#f3f4f6;
+
+font-family:
+"Noto Sans JP",
+Arial,
+sans-serif;
+
+}
+
+
+
+.login-wrapper{
+
+height:100vh;
+
+display:flex;
+
+align-items:center;
+
+justify-content:center;
+
+}
+
+
+
+.login-card{
+
+background:white;
+
+width:360px;
+
+padding:40px;
+
+border-radius:16px;
+
+box-shadow:
+0 10px 30px rgba(0,0,0,0.15);
+
+text-align:center;
+
+}
+
+
+
+.logo{
+
+font-size:36px;
+
+font-weight:bold;
+
+color:#2563eb;
+
+}
+
+
+
+.subtitle{
+
+margin-bottom:30px;
+
+color:#666;
+
+}
+
+
+
+.form-group{
+
+text-align:left;
+
+margin-bottom:18px;
+
+}
+
+
+
+.form-group label{
+
+display:block;
+
+margin-bottom:6px;
+
+}
+
+
+
+.form-group input{
+
+
+width:100%;
+
+box-sizing:border-box;
+
+padding:12px;
+
+border:1px solid #ddd;
+
+border-radius:8px;
+
+font-size:15px;
+
+
+}
+
+
+
+#loginBtn{
+
+
+width:100%;
+
+padding:13px;
+
+background:#2563eb;
+
+color:white;
+
+border:none;
+
+border-radius:8px;
+
+font-size:16px;
+
+cursor:pointer;
+
+
+}
+
+
+
+#loginBtn:disabled{
+
+background:#999;
+
+}
+
+
+
+.message{
+
+margin-top:15px;
+
+font-size:14px;
+
+}
+
+
+
+.version{
+
+margin-top:20px;
+
+color:#999;
+
+font-size:12px;
+
+}
+
+
+</style>
+
+
+</head>
+
+
+<body>
+
+
+
+<div class="login-wrapper">
+
+
+<div class="login-card">
+
+
+<div class="logo">
+
+DriveX
+
+</div>
+
+
+
+<div class="subtitle">
+
+File Management System
+
+</div>
+
+
+
+<div class="form-group">
+
+
+<label>
+
+ユーザーID
+
+</label>
+
+
+<input
+
+id="userId"
+
+type="text"
+
+placeholder="ユーザーID">
+
+
+</div>
+
+
+
+<div class="form-group">
+
+
+<label>
+
+パスワード
+
+</label>
+
+
+<input
+
+id="password"
+
+type="password"
+
+placeholder="パスワード">
+
+
+</div>
+
+
+
+<button
+
+id="loginBtn"
+
+onclick="login()">
+
+ログイン
+
+</button>
+
+
+
+<div
+
+id="message"
+
+class="message">
+
+</div>
+
+
+
+<div class="version">
+
+Version 1.0
+
+</div>
+
+
+
+</div>
+
+
+</div>
+<script>
+
+
+function login(){
+
+
+
+const id =
+
+document
+.getElementById("userId")
+.value;
+
+
+
+const pass =
+
+document
+.getElementById("password")
+.value;
+
+
+
+const btn =
+
+document
+.getElementById("loginBtn");
+
+
+
+const msg =
+
+document
+.getElementById("message");
+
+
+
+
+
+if(
+!id ||
+!pass
+){
+
+
+msg.style.color =
+"red";
+
+
+msg.innerText =
+"IDとパスワードを入力してください";
+
+
+return;
+
+
+}
+
+
+
+
+
+btn.disabled =
+true;
+
+
+btn.innerText =
+"ログイン中...";
+
+
+
+
+
+google.script.run
+
+
+
+.withSuccessHandler(
+function(result){
+
+
+
+if(
+result &&
+result.success
+){
+
+
+
+msg.style.color =
+"green";
+
+
+msg.innerText =
+"ログイン成功";
+
+
+
+
+
+/*
+ログイン情報保存
+*/
+
+sessionStorage.setItem(
+
+"user",
+
+JSON.stringify(result)
+
+);
+
+
+
+
+
+
+
+/*
+Dashboardへ移動
+*/
+
+
+setTimeout(
+function(){
+
+
+
+google.script.run
+
+
+
+.withSuccessHandler(
+function(url){
+
+
+
+window.top.location.href =
+
+url + "?page=Dashboard";
+
+
+
+}
+
+)
+
+
+
+.withFailureHandler(
+function(error){
+
+
+
+console.error(error);
+
+
+
+msg.style.color =
+"red";
+
+
+msg.innerText =
+"ページ移動エラー";
+
+
+
+btn.disabled =
+false;
+
+
+btn.innerText =
+"ログイン";
+
+
+
+}
+
+)
+
+
+
+.getWebAppUrl();
+
+
+
+
+},
+500
+);
+
+
+
+
+
+}else{
+
+
+
+msg.style.color =
+"red";
+
+
+msg.innerText =
+
+result.message;
+
+
+
+btn.disabled =
+false;
+
+
+btn.innerText =
+"ログイン";
+
+
+
+}
+
+
+
+}
+
+)
+
+
+
+
+.withFailureHandler(
+function(error){
+
+
+
+console.error(error);
+
+
+
+msg.style.color =
+"red";
+
+
+msg.innerText =
+
+"通信エラー";
+
+
+
+btn.disabled =
+false;
+
+
+btn.innerText =
+"ログイン";
+
+
+
+}
+
+)
+
+
+
+.login(
+id,
+pass
+);
+
+
+
+}
+
+
+</script>
+
+
+</body>
+
+</html>
+
+
+
+========================================
+========== Preview.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
+
+
+========================================
+========== Settings.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
+
+
+========================================
+========== Sidebar.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
+
+
+========================================
+========== Upload.html ==========
+========================================
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    
+  </body>
+</html>
+
+
