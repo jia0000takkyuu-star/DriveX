@@ -1,33 +1,19 @@
-name: Build DriveX for Windows
-
-on:
-  workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  build:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Windows EXE
-        run: npx electron-builder --win --config electron-builder.yml --publish never
-
-      - name: Upload EXE artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: DriveX-Windows
-          path: dist/*
-          if-no-files-found: error
+appId: com.jia0000takkyuu-star.drivex
+productName: DriveX
+artifactName: DriveX-${version}-${os}-${arch}.${ext}
+directories:
+  output: dist
+files:
+  - main.js
+  - package.json
+win:
+  target:
+    - nsis
+    - portable
+  icon: null
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+portable:
+  artifactName: DriveX-${version}-portable.exe
