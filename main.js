@@ -1,8 +1,7 @@
 const { app, BrowserWindow, dialog } = require('electron');
 
 // DriveX Google Apps Script Web App URL
-// Replace this with the URL ending in /exec from your Apps Script deployment.
-const WEBAPP = process.env.DRIVEX_WEBAPP_URL || 'PASTE_YOUR_DEPLOYMENT_URL_HERE';
+const WEBAPP = 'https://script.google.com/macros/s/AKfycbw-tJKmw3t8KIhPQ39Gtxv18Z26UZwKCrIoApZpn-3pILdO_zGL8icpvC4J05xWZTc2/exec';
 
 function create() {
   const win = new BrowserWindow({
@@ -18,15 +17,9 @@ function create() {
     }
   });
 
-  if (!WEBAPP || WEBAPP.includes('PASTE_YOUR_DEPLOYMENT_URL_HERE')) {
-    dialog.showErrorBox(
-      'DriveX の接続先が未設定です',
-      'main.js の WEBAPP に、Google Apps Script のWebアプリURL（/exec）を設定してください。'
-    );
-    return;
-  }
-
-  win.loadURL(WEBAPP);
+  win.loadURL(WEBAPP).catch((error) => {
+    dialog.showErrorBox('DriveX 起動エラー', `Webアプリを開けませんでした。\n\n${error.message}`);
+  });
 }
 
 app.whenReady().then(create);
