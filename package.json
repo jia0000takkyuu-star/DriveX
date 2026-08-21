@@ -1,7 +1,14 @@
 {
-  "name":"drivex-desktop",
-  "version":"1.0.0",
-  "main":"main.js",
-  "scripts":{"start":"electron ."},
-  "devDependencies":{"electron":"^37.2.0"}
+  "name": "drivex-desktop",
+  "version": "1.0.0",
+  "description": "DriveX desktop application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
 }
